@@ -36,6 +36,8 @@ yarn-error.log*
 
 # local env files
 .env*.local
+# local-only catalogs (e.g. config/agentcore-agents.local.json; see the *.example.json next to it)
+/config/*.local.json
 
 # vercel
 .vercel

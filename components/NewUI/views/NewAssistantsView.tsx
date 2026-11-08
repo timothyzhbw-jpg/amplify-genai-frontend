@@ -1,6 +1,6 @@
 /**
  * NewAssistantsView — New UI replacement for AssistantGallery.
- * Four tabs: My Assistants | Shared with Me | Teams | Layered Assistants
+ * Tabs: My Assistants | Shared with Me | Groups | Layered Assistants | Agents (| Helper, feature-gated)
  * (Prompt Templates moved to Settings → Customize → Prompt Templates)
  *
  * Design tokens from styles/globals.css:
@@ -12,6 +12,7 @@ import React, { useContext, useState, useMemo, useRef, useEffect, useCallback } 
 import {
     IconX,
     IconRobot,
+    IconRobotFace,
     IconSparkles,
     IconUsers,
     IconGitBranch,
@@ -55,6 +56,7 @@ import type { AssistantAccessType } from './assistant/assistantTypeSwitch';
 import { AstPathData } from '@/components/Promptbar/components/AssistantModalComponents/AssistantPathEditor';
 import { ConfirmDialog } from '@/components/NewUI/shared/ConfirmDialog';
 import { InfoTooltip } from '@/components/NewUI/shared/InfoTooltip';
+import { ScrollableTabStrip } from '@/components/NewUI/shared/ScrollableTabStrip';
 import { AssistantConfigSummary } from '@/components/NewUI/shared/AssistantConfigSummary';
 import { resolveSourceOpenTarget } from '@/components/NewUI/shared/assistantConfigModel';
 import type { SummaryDataSource } from '@/components/NewUI/shared/assistantConfigModel';
@@ -95,16 +97,21 @@ import {
     isSelectedAssistantDeleted,
     promptsAfterAssistantDelete,
 } from './assistant/assistantDeletion';
+import { AGENT_OPS_LANGUAGE_VERSION, isAgentAssistant } from './assistant/agentAssistantModel';
+import { filterAgentCoreAgents } from './assistant/agentCoreAgentModel';
+import { useAgentCoreAgents } from './assistant/useAgentCoreAgents';
+import { AgentCoreAgentsSection } from './assistant/AgentCoreAgentsSection';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type MainTab = 'individual' | 'shared' | 'group' | 'layered' | 'amplifyHelper';
+type MainTab = 'individual' | 'shared' | 'group' | 'layered' | 'agents' | 'amplifyHelper';
 
 const ASSISTANT_TYPES_INFO =
     'My Assistants: assistants you created or imported, which you own and can edit. ' +
     'Shared with Me: assistants other people shared with you; they are read-only until you import a copy. ' +
     'Groups: assistants managed by a group you belong to, available to all of its members. ' +
-    'Layered Assistants: a router that reads your prompt and automatically picks the best assistant from a set you choose to answer it.';
+    'Layered Assistants: a router that reads your prompt and automatically picks the best assistant from a set you choose to answer it. ' +
+    'Agents: your assistants set to the Agent type, which plan and call tools step by step to finish a task. They also appear under My Assistants; agents that belong to a group are listed under Groups.';
 
 type ShareProvenance = SharedAssistantProvenance;
 
@@ -527,7 +534,12 @@ const SearchInput: React.FC<{ value: string; onChange: (v: string) => void; plac
 
 // ── Tab 1: My Assistants ──────────────────────────────────────────────────────
 
-const MyAssistantsTab: React.FC = () => {
+/**
+ * My Assistants, and — with `agentsOnly` — the Agents tab: the same rows and actions, narrowed to
+ * assistants saved with the Agent type (`isAgentAssistant`). "New Agent" opens the creation modal on
+ * that type, and is offered only where the Agent type exists (`featureFlags.agentAssistantType`).
+ */
+const MyAssistantsTab: React.FC<{ agentsOnly?: boolean }> = ({ agentsOnly = false }) => {
     const {
         state: {
             prompts,
@@ -634,11 +646,35 @@ const MyAssistantsTab: React.FC = () => {
                 !p.groupId &&
                 (canEdit(p) || !!shareProvenance(p) || p.data?.noEdit === true) &&
                 isVisible(p) &&
-                !(isReceivedSharedAssistant(p) && getSharedAssistantIdentity(p).some((id) => dismissedSharedAssistantIds.includes(id)))
+                !(isReceivedSharedAssistant(p) && getSharedAssistantIdentity(p).some((id) => dismissedSharedAssistantIds.includes(id))) &&
+                (!agentsOnly || isAgentAssistant(p))
             )
             .sort((a: Prompt, b: Prompt) => a.name.localeCompare(b.name)),
-        [prompts, featureFlags.overrideInvisiblePrompts, dismissedSharedAssistantIds]
+        [prompts, featureFlags.overrideInvisiblePrompts, dismissedSharedAssistantIds, agentsOnly]
     );
+
+    // The Agent type only exists in the editor behind this flag (types/op.ts), so without it the
+    // Agents tab offers no New Agent. Agents can still exist — an assistant built from a workflow
+    // template is saved as v4 — so the copy below never claims agents are unavailable. Read from
+    // the stable flags (§5 rule 12): raw state.featureFlags can be empty or a lone patch after load.
+    const stableFlags = useStableFeatureFlags();
+    const canCreate = !agentsOnly || stableFlags.agentAssistantType === true;
+    const noun = agentsOnly ? 'agent' : 'assistant';
+    const noCreateCopy = stableFlags.assistantWorkflows === true
+        ? 'Assistants that run as agents show up here, including ones you create from a workflow template.'
+        : 'Assistants that run as agents show up here.';
+
+    // Agents tab only: read-only AgentCore runtimes from the local catalog. Empty (and the section
+    // hidden) wherever no catalog file exists, so the tab is unchanged for everyone else.
+    const agentCore = useAgentCoreAgents(agentsOnly);
+    const agentCoreMatches = useMemo(
+        () => filterAgentCoreAgents(agentCore.agents, search),
+        [agentCore.agents, search]
+    );
+    const showAgentCore = agentsOnly && agentCore.agents.length > 0;
+    // Hold the whole list until the catalog answers: otherwise "No agents yet" flashes first, or
+    // existing agent rows jump down when the AgentCore section lands above them.
+    const waitingForCatalog = agentsOnly && agentCore.loading;
 
     const filtered = useMemo(() => {
         if (!search.trim()) return allAssistants;
@@ -771,6 +807,35 @@ const MyAssistantsTab: React.FC = () => {
         return { label: 'URL', bg: 'rgba(58,167,100,0.12)', color: '#3aa764' };
     };
 
+    const renderAssistantRow = (p: Prompt) => (
+        <AssistantRow
+            key={p.id}
+            customIcon={promptIconRef(p)}
+            name={p.name}
+            description={p.description}
+            accessBadge={getAccessBadge(p)}
+            sharedBy={shareProvenance(p) ? `Shared by ${resolveSharedBy(shareProvenance(p)!.sharedBy)}` : p.data?.noEdit ? 'Shared with you' : undefined}
+            onClick={() => handleStartConversation(p)}
+            onPreview={isReceivedSharedAssistant(p) ? (e) => { e.stopPropagation(); setPreviewPrompt(p); } : undefined}
+            onCopy={isReceivedSharedAssistant(p) ? (e) => {
+                e.stopPropagation();
+                openCopyAssistant(p, shareProvenance(p)!);
+            } : undefined}
+            onHide={isReceivedSharedAssistant(p) ? (e) => {
+                e.stopPropagation();
+                setPromptToHide(p);
+            } : undefined}
+            onDuplicate={p.data?.noEdit || isReceivedSharedAssistant(p) ? undefined : (e) => handleDuplicateAssistant(e, p)}
+            onEdit={p.data?.noEdit ? undefined : (e) => handleEditAssistant(e, p)}
+            onShare={p.data?.noShare ? undefined : (e) => handleShareAssistant(e, p)}
+            onDelete={p.data?.noDelete ? undefined : (e) => {
+                e.stopPropagation();
+                setConfirmDeleteAssistant(p);
+            }}
+            isDeleting={deletingPromptId === p.id}
+        />
+    );
+
     return (
         <div className="flex flex-col h-full overflow-hidden">
             {/* Header row */}
@@ -778,59 +843,70 @@ const MyAssistantsTab: React.FC = () => {
                 className="flex items-center justify-between px-6 py-3 flex-shrink-0 border-b"
                 style={{ borderColor: 'var(--border-subtle)' }}
             >
-                <SearchInput value={search} onChange={setSearch} placeholder="Search assistants…" />
-                <button
-                    onClick={handleNewAssistantClick}
-                    className="flex items-center gap-1.5 h-[34px] px-4 rounded-[8px] text-[13px] font-medium text-white transition-opacity hover:opacity-90"
-                    style={{ backgroundColor: 'var(--accent)' }}
-                >
-                    <IconPlus size={14} />
-                    New Assistant
-                </button>
+                <SearchInput value={search} onChange={setSearch} placeholder={`Search ${noun}s…`} />
+                {canCreate && (
+                    <button
+                        onClick={handleNewAssistantClick}
+                        className="flex items-center gap-1.5 h-[34px] px-4 rounded-[8px] text-[13px] font-medium text-white transition-opacity hover:opacity-90"
+                        style={{ backgroundColor: 'var(--accent)' }}
+                    >
+                        <IconPlus size={14} />
+                        {agentsOnly ? 'New Agent' : 'New Assistant'}
+                    </button>
+                )}
             </div>
 
             {/* List */}
             <div className="flex-1 overflow-y-auto px-3 py-2">
-                {filtered.length === 0 ? (
+                {agentsOnly && agentCore.error && (
+                    <p role="status" className="px-3 py-2 text-[12.5px]" style={{ color: 'var(--text-error)' }}>
+                        {agentCore.error}
+                    </p>
+                )}
+                {waitingForCatalog ? (
+                    <p className="px-3 py-2 text-[13px]" style={{ color: 'var(--text-muted)' }}>
+                        Loading agents…
+                    </p>
+                ) : showAgentCore ? (
+                    <>
+                        <AgentCoreAgentsSection agents={agentCoreMatches} total={agentCore.agents.length} />
+                        <SectionHeading label="Agent assistants" count={allAssistants.length} />
+                        {filtered.length === 0 ? (
+                            <p className="px-3 py-2 text-[13px]" style={{ color: 'var(--text-muted)' }}>
+                                {search
+                                    ? 'No agent assistants match your search'
+                                    : canCreate
+                                        ? 'No agent assistants yet. Use New Agent to create one.'
+                                        : noCreateCopy}
+                            </p>
+                        ) : (
+                            filtered.map(renderAssistantRow)
+                        )}
+                    </>
+                ) : filtered.length === 0 ? (
                     !search ? (
-                        <EmptyState
-                            message="No assistants yet"
-                            subMessage="Create your first assistant to get started"
-                            onAction={handleNewAssistantClick}
-                            actionLabel="Create your first assistant"
-                        />
+                        agentsOnly ? (
+                            <EmptyState
+                                message="No agents yet"
+                                subMessage={canCreate
+                                    ? 'An agent plans and calls tools step by step to finish a task. Use New Agent to create one.'
+                                    : noCreateCopy}
+                                onAction={canCreate ? handleNewAssistantClick : undefined}
+                                actionLabel={canCreate ? 'Create your first agent' : undefined}
+                            />
+                        ) : (
+                            <EmptyState
+                                message="No assistants yet"
+                                subMessage="Create your first assistant to get started"
+                                onAction={handleNewAssistantClick}
+                                actionLabel="Create your first assistant"
+                            />
+                        )
                     ) : (
-                        <EmptyState message="No assistants match your search" />
+                        <EmptyState message={`No ${noun}s match your search`} />
                     )
                 ) : (
-                    filtered.map((p: Prompt) => (
-                        <AssistantRow
-                            key={p.id}
-                            customIcon={promptIconRef(p)}
-                            name={p.name}
-                            description={p.description}
-                            accessBadge={getAccessBadge(p)}
-                            sharedBy={shareProvenance(p) ? `Shared by ${resolveSharedBy(shareProvenance(p)!.sharedBy)}` : p.data?.noEdit ? 'Shared with you' : undefined}
-                            onClick={() => handleStartConversation(p)}
-                            onPreview={isReceivedSharedAssistant(p) ? (e) => { e.stopPropagation(); setPreviewPrompt(p); } : undefined}
-                            onCopy={isReceivedSharedAssistant(p) ? (e) => {
-                                e.stopPropagation();
-                                openCopyAssistant(p, shareProvenance(p)!);
-                            } : undefined}
-                            onHide={isReceivedSharedAssistant(p) ? (e) => {
-                                e.stopPropagation();
-                                setPromptToHide(p);
-                            } : undefined}
-                            onDuplicate={p.data?.noEdit || isReceivedSharedAssistant(p) ? undefined : (e) => handleDuplicateAssistant(e, p)}
-                            onEdit={p.data?.noEdit ? undefined : (e) => handleEditAssistant(e, p)}
-                            onShare={p.data?.noShare ? undefined : (e) => handleShareAssistant(e, p)}
-                            onDelete={p.data?.noDelete ? undefined : (e) => {
-                                e.stopPropagation();
-                                setConfirmDeleteAssistant(p);
-                            }}
-                            isDeleting={deletingPromptId === p.id}
-                        />
-                    ))
+                    filtered.map(renderAssistantRow)
                 )}
             </div>
             {/* Blocks the list while the backend delete is in flight so it can't double-fire */}
@@ -839,6 +915,8 @@ const MyAssistantsTab: React.FC = () => {
             {/* Create new assistant modal */}
             {showCreationModal && (
                 <NewUIAssistantCreationModal
+                    initialOpsLanguageVersion={agentsOnly ? AGENT_OPS_LANGUAGE_VERSION : undefined}
+                    createTitle={agentsOnly ? 'New Agent' : undefined}
                     onClose={() => setShowCreationModal(false)}
                 />
             )}
@@ -2257,6 +2335,12 @@ export const NewAssistantsView: React.FC = () => {
             visible: shouldShowLayeredTab,
         },
         {
+            id: 'agents',
+            label: 'Agents',
+            icon: <IconRobotFace size={15} />,
+            visible: true,
+        },
+        {
             id: 'amplifyHelper',
             label: `${getBrandName()} Helper`,
             icon: <IconSparkles size={15} />,
@@ -2298,8 +2382,9 @@ export const NewAssistantsView: React.FC = () => {
                     <IconX size={16} />
                 </button>
 
-                {/* Tabs */}
-                <div className="flex items-center h-full gap-1">
+                {/* Tabs — scroll sideways instead of wrapping labels or clipping the last tab on a narrow
+                    pane; arrows appear on whichever edge still hides tabs (shared/ScrollableTabStrip). */}
+                <ScrollableTabStrip activeKey={activeTab}>
                     {tabs
                         .filter((t) => t.visible)
                         .map((tab) => {
@@ -2307,8 +2392,9 @@ export const NewAssistantsView: React.FC = () => {
                             return (
                                 <button
                                     key={tab.id}
+                                    data-tab-id={tab.id}
                                     onClick={() => changeTab(tab.id)}
-                                    className="relative flex items-center gap-1.5 h-full px-3 text-[13px] transition-colors"
+                                    className="relative flex flex-shrink-0 items-center gap-1.5 h-full px-3 text-[13px] whitespace-nowrap transition-colors"
                                     style={{ color: isActive ? 'var(--text-primary)' : 'var(--text-muted)' }}
                                     onMouseEnter={(e) => {
                                         if (!isActive) {
@@ -2332,7 +2418,7 @@ export const NewAssistantsView: React.FC = () => {
                                 </button>
                             );
                         })}
-                </div>
+                </ScrollableTabStrip>
 
                 <div className="ml-2 flex items-center flex-shrink-0">
                     <InfoTooltip
@@ -2349,6 +2435,7 @@ export const NewAssistantsView: React.FC = () => {
                 {activeTab === 'shared' && <SharedWithMeTab onImported={() => changeTab('individual')} />}
                 {activeTab === 'group' && shouldShowGroupTab && <GroupAssistantsTab />}
                 {activeTab === 'layered' && shouldShowLayeredTab && <LayeredAssistantsTab />}
+                {activeTab === 'agents' && <MyAssistantsTab agentsOnly />}
                 {activeTab === 'amplifyHelper' && helperEnabled && (
                     <AmplifyHelperAssistant
                         onStartChat={handleAmplifyHelperStartChat}

@@ -1,5 +1,7 @@
 .env
 .env.local
+# local-only catalogs (git-ignored), e.g. config/agentcore-agents.local.json
+config/*.local.json
 node_modules
 test-results
 .next

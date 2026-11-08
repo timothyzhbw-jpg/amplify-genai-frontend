@@ -107,6 +107,7 @@ import { promptForData } from '@/utils/app/llm';
 import { COMMON_DISALLOWED_FILE_EXTENSIONS } from '@/utils/app/const';
 import { getSettings } from '@/utils/app/settings';
 import { opLanguageOptionsMap } from '@/types/op';
+import { AGENT_OPS_LANGUAGE_VERSION, withCurrentOpsLanguageOption } from './assistant/agentAssistantModel';
 import { Flag } from '@/components/ReusableComponents/FlagsMap';
 import { ToggleSwitch } from '@/components/NewUI/shared/ToggleSwitch';
 import { EmailChipsInput } from '@/components/NewUI/shared/EmailChipsInput';
@@ -184,6 +185,14 @@ export interface NewUIAssistantCreationModalProps {
      * that card 3 is pre-selected and the group is already chosen.
      */
     initialGroupId?: string;
+    /**
+     * Assistant Type a brand-new assistant starts on (an `opsLanguageVersion` key of
+     * `opLanguageOptionsMap`) — "New Agent" in the Agents tab passes 'v4'. Edit and copy modes
+     * ignore it and hydrate the saved value instead.
+     */
+    initialOpsLanguageVersion?: string;
+    /** Create mode only: header text instead of "New Assistant" — "New Agent" from the Agents tab. */
+    createTitle?: string;
     /**
      * When provided, the modal opens in **edit mode**:
      *  - All form fields are pre-populated from the existing assistant's definition.
@@ -453,6 +462,8 @@ const SectionDivider: React.FC<{ label?: string }> = ({ label }) => (
 export const NewUIAssistantCreationModal: React.FC<NewUIAssistantCreationModalProps> = ({
     onClose,
     initialGroupId,
+    initialOpsLanguageVersion,
+    createTitle,
     editingAssistant,
     copyingAssistant,
     copyTargetAccess,
@@ -656,9 +667,12 @@ export const NewUIAssistantCreationModal: React.FC<NewUIAssistantCreationModalPr
     const [tags, setTags] = useState('');
     const [conversationTags, setConversationTags] = useState('');
 
-    // Assistant Type (opsLanguageVersion) — default "v1 = Standard"
-    // Note: overridden to 'v4' when a workflow template is selected (see save flow)
-    const [opsLanguageVersion, setOpsLanguageVersion] = useState('v1');
+    // Assistant Type (opsLanguageVersion) — default "v1 = Standard" unless the host preset one
+    // (edit/copy hydrate the saved value over it). Note: overridden to 'v4' when a workflow
+    // template is selected (see save flow)
+    const [opsLanguageVersion, setOpsLanguageVersion] = useState(
+        sourceAssistant ? 'v1' : (initialOpsLanguageVersion ?? 'v1')
+    );
 
     // Allow other users to request access to this assistant
     const [availableOnRequest, setAvailableOnRequest] = useState(false);
@@ -1855,7 +1869,7 @@ export const NewUIAssistantCreationModal: React.FC<NewUIAssistantCreationModalPr
                 ? 'Edit Assistant'
                 : isCopyMode
                     ? (copyTargetAccess ? copyModalTitle(copyTargetAccess) : 'Make a Copy')
-                    : 'New Assistant'}
+                    : (createTitle ?? 'New Assistant')}
             titleAdornment={!isEditMode && !isCopyMode ? (
                 <InfoTooltip
                     ariaLabel="About assistants"
@@ -3111,7 +3125,10 @@ export const NewUIAssistantCreationModal: React.FC<NewUIAssistantCreationModalPr
                                                 cursor: baseWorkflowTemplateId ? 'not-allowed' : 'pointer',
                                             }}
                                         >
-                                            {Object.entries(opLanguageOptionsMap(featureFlags)).map(([val, label]) => (
+                                            {Object.entries(withCurrentOpsLanguageOption(
+                                                opLanguageOptionsMap(featureFlags),
+                                                baseWorkflowTemplateId ? AGENT_OPS_LANGUAGE_VERSION : opsLanguageVersion,
+                                            )).map(([val, label]) => (
                                                 <option key={val} value={val}>{label as string}</option>
                                             ))}
                                         </select>

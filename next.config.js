@@ -5,6 +5,11 @@ const nextConfig = {
   i18n,
   reactStrictMode: true,
   output: "standalone",
+  // Local-only catalogs (git-ignored config/*.local.json, e.g. the AgentCore agents list) must
+  // never be traced into the standalone server output.
+  outputFileTracingExcludes: {
+    '*': ['config/*.local.json'],
+  },
   transpilePackages: ['react-syntax-highlighter', 'refractor'],
 
   // Strip console.log/info/debug from production bundles; keep error/warn so real

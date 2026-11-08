@@ -1,0 +1,20 @@
+{
+  "_comment": "Copy to config/agentcore-agents.local.json (git-ignored) to list AWS Bedrock AgentCore runtimes, read-only, in Assistants > Agents. Only runtimeArn is required; values come from the runtime's page in the AgentCore console. authType is JWT or IAM.",
+  "agents": [
+    {
+      "name": "example_agent",
+      "runtimeId": "example_agent-AbCdE12345",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/example_agent-AbCdE12345",
+      "description": "What this agent does",
+      "status": "ACTIVE",
+      "version": 1,
+      "authType": "IAM",
+      "protocol": "HTTP",
+      "networkMode": "PUBLIC",
+      "idleTimeoutMinutes": 15,
+      "maxLifetimeHours": 8,
+      "createdAt": "2026-01-01T09:00:00-06:00",
+      "updatedAt": "2026-01-01T09:00:00-06:00"
+    }
+  ]
+}
